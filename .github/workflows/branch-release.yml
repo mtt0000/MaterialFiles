@@ -5,11 +5,11 @@ name: Branch release
 # deleted, its release is deleted too.
 #
 # To get a signed release APK (which can be installed as an update over the previous one), add
-# these repository secrets (Settings > Secrets and variables > Actions):
-#   SIGNING_KEYSTORE_BASE64  The keystore file, encoded with `base64 -w 0 signing.jks`
-#   SIGNING_STORE_PASSWORD   The keystore password
-#   SIGNING_KEY_ALIAS        The key alias
-#   SIGNING_KEY_PASSWORD     The key password
+# these repository secrets (synced automatically by mtt0000/shared-workflows):
+#   KEYSTORE_BASE64  The keystore file, encoded with `base64 -w 0 signing.jks`
+#   STORE_PASSWORD   The keystore password
+#   KEY_ALIAS        The key alias
+#   KEY_PASSWORD     The key password
 # Without them an unsigned release APK is published instead, which has to be signed before it can
 # be installed.
 
@@ -50,10 +50,10 @@ jobs:
       - name: Set up signing key
         id: signing
         env:
-          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           if [ -n "$SIGNING_KEYSTORE_BASE64" ] && [ -n "$SIGNING_STORE_PASSWORD" ] \
               && [ -n "$SIGNING_KEY_ALIAS" ] && [ -n "$SIGNING_KEY_PASSWORD" ]; then
