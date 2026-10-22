@@ -1,0 +1,146 @@
+name: Branch release
+
+# Builds the APK for the latest commit of each branch and publishes it as the GitHub release
+# "apk-<branch>", replacing the previous release (and tag) of the same branch. When a branch is
+# deleted, its release is deleted too.
+#
+# To get a signed release APK (which can be installed as an update over the previous one), add
+# these repository secrets (Settings > Secrets and variables > Actions):
+#   SIGNING_KEYSTORE_BASE64  The keystore file, encoded with `base64 -w 0 signing.jks`
+#   SIGNING_STORE_PASSWORD   The keystore password
+#   SIGNING_KEY_ALIAS        The key alias
+#   SIGNING_KEY_PASSWORD     The key password
+# Without them a debug APK is published instead.
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+  delete:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: branch-release-${{ github.event_name == 'delete' && github.event.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    if: github.event_name != 'delete'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up signing key
+        id: signing
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          if [ -n "$SIGNING_KEYSTORE_BASE64" ] && [ -n "$SIGNING_STORE_PASSWORD" ] \
+              && [ -n "$SIGNING_KEY_ALIAS" ] && [ -n "$SIGNING_KEY_PASSWORD" ]; then
+            echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > signing.jks
+            {
+              echo "storeFile=signing.jks"
+              echo "storePassword=$SIGNING_STORE_PASSWORD"
+              echo "keyAlias=$SIGNING_KEY_ALIAS"
+              echo "keyPassword=$SIGNING_KEY_PASSWORD"
+            } > signing.properties
+            echo "build_type=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Signing secrets are not set, publishing a debug APK instead."
+            echo "build_type=debug" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build APK
+        env:
+          BUILD_TYPE: ${{ steps.signing.outputs.build_type }}
+        run: |
+          if [ "$BUILD_TYPE" = release ]; then
+            ./gradlew assembleRelease
+          else
+            ./gradlew assembleDebug
+          fi
+
+      - name: Remove signing key
+        if: always()
+        run: rm -f signing.jks signing.properties
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BUILD_TYPE: ${{ steps.signing.outputs.build_type }}
+        run: |
+          set -euo pipefail
+          tag="apk-$(echo "$BRANCH" | sed 's/[^A-Za-z0-9._-]/-/g')"
+          short_sha="$(git rev-parse --short HEAD)"
+          apk_name="MaterialFiles-${tag#apk-}-${short_sha}-${BUILD_TYPE}.apk"
+          cp "$(ls app/build/outputs/apk/"$BUILD_TYPE"/*.apk | head -n 1)" "$apk_name"
+
+          # Delete the previous release and tag of this branch.
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release delete "$tag" --cleanup-tag --yes
+          fi
+          git push origin --delete "refs/tags/$tag" 2> /dev/null || true
+
+          notes_file="$(mktemp)"
+          {
+            echo "APK built from the latest commit of \`$BRANCH\`."
+            echo
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Message: $(git log -1 --format=%s)"
+            echo "- Build type: $BUILD_TYPE"
+            if [ "$BUILD_TYPE" = debug ]; then
+              echo
+              echo "This is a debug build, signed with a temporary key: uninstall the previous" \
+                "version before installing it."
+            fi
+          } > "$notes_file"
+
+          latest=false
+          prerelease=true
+          if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
+            latest=true
+            prerelease=false
+          fi
+          gh release create "$tag" "$apk_name" \
+            --target "$GITHUB_SHA" \
+            --title "$BRANCH ($short_sha)" \
+            --notes-file "$notes_file" \
+            --latest="$latest" \
+            $( [ "$prerelease" = true ] && echo --prerelease )
+
+  cleanup:
+    if: github.event_name == 'delete' && github.event.ref_type == 'branch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Delete release of deleted branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.ref }}
+        run: |
+          tag="apk-$(echo "$BRANCH" | sed 's/[^A-Za-z0-9._-]/-/g')"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release delete "$tag" --cleanup-tag --yes
+          fi
