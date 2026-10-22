@@ -76,8 +76,10 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            // Build an unsigned APK when no signing key is configured.
-            signingConfig signingConfigs.release.storeFile != null ? signingConfigs.release : null
+            // Fall back to the debug key when no signing key is configured, because an unsigned APK
+            // can't be installed.
+            signingConfig signingConfigs.release.storeFile != null ? signingConfigs.release
+                    : signingConfigs.debug
 //#ifdef NONFREE
             firebaseCrashlytics {
                 nativeSymbolUploadEnabled true

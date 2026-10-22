@@ -10,8 +10,8 @@ name: Branch release
 #   STORE_PASSWORD   The keystore password
 #   KEY_ALIAS        The key alias
 #   KEY_PASSWORD     The key password
-# Without them an unsigned release APK is published instead, which has to be signed before it can
-# be installed.
+# Without them the release APK is signed with a throwaway debug key instead: it can be installed
+# fresh, but not as an update over an APK signed with a different key.
 
 on:
   push:
@@ -66,7 +66,7 @@ jobs:
             } > signing.properties
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Signing secrets are not set, publishing an unsigned APK."
+            echo "::warning::Signing secrets are not set, signing the APK with a debug key."
             echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -92,7 +92,7 @@ jobs:
           if [ "$SIGNED" = true ]; then
             apk_name="MaterialFiles-${tag#apk-}-${short_sha}.apk"
           else
-            apk_name="MaterialFiles-${tag#apk-}-${short_sha}-unsigned.apk"
+            apk_name="MaterialFiles-${tag#apk-}-${short_sha}-debug-signed.apk"
           fi
           cp "$(ls app/build/outputs/apk/release/*.apk | head -n 1)" "$apk_name"
 
@@ -110,8 +110,8 @@ jobs:
             echo "- Message: $(git log -1 --format=%s)"
             if [ "$SIGNED" != true ]; then
               echo
-              echo "This APK is unsigned: it has to be signed (e.g. with apksigner) before it" \
-                "can be installed."
+              echo "This APK is signed with a throwaway debug key because the signing secrets" \
+                "are not set: uninstall any previous version before installing it."
             fi
           } > "$notes_file"
 
