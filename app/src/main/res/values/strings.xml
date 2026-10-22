@@ -678,6 +678,9 @@
     <string name="storage_edit_webdav_server_add">Add</string>
 
     <string name="navigation_storage_subtitle_format">%1$s free of %2$s</string>
+    <string name="storage_volume_connected_format">%1$s connected</string>
+    <string name="storage_volume_removed_format">%1$s was removed</string>
+    <string name="storage_volume_open">Open</string>
     <string name="navigation_add_storage">Add storage…</string>
     <string name="navigation_standard_directory_alarms">Alarms</string>
     <string name="navigation_standard_directory_dcim">DCIM</string>

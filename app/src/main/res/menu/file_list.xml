@@ -68,6 +68,14 @@
     </item>
 
     <item
+        android:id="@+id/action_cancel_pick"
+        android:icon="@drawable/close_icon_control_normal_24dp"
+        android:orderInCategory="100"
+        android:title="@android:string/cancel"
+        android:visible="false"
+        app:showAsAction="always" />
+
+    <item
         android:id="@+id/action_new_task"
         android:orderInCategory="100"
         android:title="@string/file_list_action_new_task"

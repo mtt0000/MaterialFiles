@@ -32,6 +32,7 @@ import me.zhanghai.android.files.storage.Storage
 import me.zhanghai.android.files.storage.StorageVolumeListLiveData
 import me.zhanghai.android.files.util.createIntent
 import me.zhanghai.android.files.util.isMounted
+import me.zhanghai.android.files.util.isUsb
 import me.zhanghai.android.files.util.putArgs
 import me.zhanghai.android.files.util.supportsExternalStorageManager
 import me.zhanghai.android.files.util.valueCompat
@@ -150,7 +151,12 @@ private class StorageVolumeItem(
 
     override val iconRes: Int
         @DrawableRes
-        get() = R.drawable.sd_card_icon_white_24dp
+        get() =
+            if (storageVolume.isUsb) {
+                R.drawable.usb_icon_white_24dp
+            } else {
+                R.drawable.sd_card_icon_white_24dp
+            }
 
     override fun getTitle(context: Context): String = storageVolume.getDescriptionCompat(context)
 

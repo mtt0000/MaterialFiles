@@ -16,6 +16,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.storage.StorageVolume
 import android.text.TextUtils
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
@@ -48,6 +49,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import com.google.android.material.snackbar.Snackbar
 import com.leinardi.android.speeddial.SpeedDialView
 import java8.nio.file.Path
 import java8.nio.file.Paths
@@ -57,6 +59,9 @@ import me.zhanghai.android.files.R
 import me.zhanghai.android.files.app.application
 import me.zhanghai.android.files.app.clipboardManager
 import me.zhanghai.android.files.compat.checkSelfPermissionCompat
+import me.zhanghai.android.files.compat.getDescriptionCompat
+import me.zhanghai.android.files.compat.isPrimaryCompat
+import me.zhanghai.android.files.compat.pathCompat
 import me.zhanghai.android.files.compat.setGroupDividerEnabledCompat
 import me.zhanghai.android.files.databinding.FileListFragmentAppBarIncludeBinding
 import me.zhanghai.android.files.databinding.FileListFragmentBinding
@@ -83,6 +88,7 @@ import me.zhanghai.android.files.provider.archive.createArchiveRootPath
 import me.zhanghai.android.files.provider.archive.isArchivePath
 import me.zhanghai.android.files.provider.linux.isLinuxPath
 import me.zhanghai.android.files.settings.Settings
+import me.zhanghai.android.files.storage.StorageVolumeListLiveData
 import me.zhanghai.android.files.terminal.Terminal
 import me.zhanghai.android.files.ui.AppBarLayoutExpandHackListener
 import me.zhanghai.android.files.ui.CoordinatorAppBarLayout
@@ -120,6 +126,7 @@ import me.zhanghai.android.files.util.fadeToVisibilityUnsafe
 import me.zhanghai.android.files.util.getDimensionDp
 import me.zhanghai.android.files.util.getQuantityString
 import me.zhanghai.android.files.util.hasSw600Dp
+import me.zhanghai.android.files.util.isMounted
 import me.zhanghai.android.files.util.isOrientationLandscape
 import me.zhanghai.android.files.util.putArgs
 import me.zhanghai.android.files.util.setOnEditorConfirmActionListener
@@ -166,6 +173,8 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
     private val argsPath by lazy { args.intent.extraPath }
 
     private val viewModel by viewModels { { FileListViewModel() } }
+
+    private var mountedStorageVolumes: Map<String, StorageVolume>? = null
 
     private lateinit var binding: Binding
 
@@ -269,7 +278,10 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
             }
                 .also { callback ->
                     viewModel.breadcrumbLiveData.observe(viewLifecycleOwner) {
-                        callback.isEnabled = viewModel.canNavigateUpBreadcrumb
+                        callback.isEnabled = canNavigateUpOnBackPressed
+                    }
+                    viewModel.pickOptionsLiveData.observe(viewLifecycleOwner) {
+                        callback.isEnabled = canNavigateUpOnBackPressed
                     }
                 }
         )
@@ -337,6 +349,7 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
             }
             viewModel.resetTo(path)
             if (pickOptions != null) {
+                viewModel.pickStartPath = path
                 viewModel.pickOptions = pickOptions
             }
         }
@@ -368,10 +381,14 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
         Settings.FILE_LIST_SHOW_HIDDEN_FILES.observe(viewLifecycleOwner) {
             onShowHiddenFilesChanged(it)
         }
+        mountedStorageVolumes = null
+        StorageVolumeListLiveData.observe(viewLifecycleOwner) { onStorageVolumeListChanged(it) }
     }
 
     override fun onResume() {
         super.onResume()
+
+        StorageVolumeListLiveData.reload()
 
         if (!viewModel.isNotificationPermissionRequested) {
             ensureStorageAccess()
@@ -439,6 +456,7 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
         super.onPrepareOptionsMenu(menu)
 
         updateViewSortMenuItems()
+        updateCancelPickMenuItem()
         updateSelectAllMenuItem()
         updateShowHiddenFilesMenuItem()
     }
@@ -494,6 +512,10 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
             }
             R.id.action_view_sort_path_specific -> {
                 viewModel.isViewSortPathSpecific = !menuBinding.viewSortPathSpecificItem.isChecked
+                true
+            }
+            R.id.action_cancel_pick -> {
+                cancelPick()
                 true
             }
             R.id.action_new_task -> {
@@ -780,6 +802,45 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
         startActivitySafe(intent)
     }
 
+    private fun onStorageVolumeListChanged(storageVolumes: List<StorageVolume>) {
+        val newMountedStorageVolumes = storageVolumes
+            .filter { !it.isPrimaryCompat && it.isMounted }
+            .associateBy { it.pathCompat }
+        val oldMountedStorageVolumes = mountedStorageVolumes
+        mountedStorageVolumes = newMountedStorageVolumes
+        if (oldMountedStorageVolumes == null) {
+            return
+        }
+        val removedPaths = oldMountedStorageVolumes.keys - newMountedStorageVolumes.keys
+        val currentPath = viewModel.currentPath
+        val removedCurrentVolume = removedPaths.firstOrNull {
+            currentPath.isLinuxPath && currentPath.startsWith(Paths.get(it))
+        }
+        if (removedCurrentVolume != null) {
+            val name = oldMountedStorageVolumes[removedCurrentVolume]!!
+                .getDescriptionCompat(requireContext())
+            navigateToDefaultRoot()
+            Snackbar.make(
+                binding.recyclerView, getString(R.string.storage_volume_removed_format, name),
+                Snackbar.LENGTH_LONG
+            ).show()
+            return
+        }
+        val addedStorageVolume = (newMountedStorageVolumes.keys - oldMountedStorageVolumes.keys)
+            .firstOrNull()?.let { newMountedStorageVolumes[it] } ?: return
+        val path = Paths.get(addedStorageVolume.pathCompat)
+        Snackbar.make(
+            binding.recyclerView,
+            getString(
+                R.string.storage_volume_connected_format,
+                addedStorageVolume.getDescriptionCompat(requireContext())
+            ),
+            Snackbar.LENGTH_LONG
+        )
+            .setAction(R.string.storage_volume_open) { navigateToRoot(path) }
+            .show()
+    }
+
     private fun onPickOptionsChanged(pickOptions: PickOptions?) {
         val title = if (pickOptions == null) {
             getString(R.string.file_list_title)
@@ -794,10 +855,38 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
             }
         }
         requireActivity().title = title
+        updateCancelPickMenuItem()
         updateSelectAllMenuItem()
         updateOverlayToolbar()
         updateBottomToolbar()
         adapter.pickOptions = pickOptions
+    }
+
+    // When picking for another app, going back from the directory the picker was opened in should
+    // return to that app instead of walking up the whole directory hierarchy.
+    private val canNavigateUpOnBackPressed: Boolean
+        get() {
+            val breadcrumbData = viewModel.breadcrumbLiveData.value ?: return false
+            if (breadcrumbData.selectedIndex <= 0) {
+                return false
+            }
+            if (viewModel.pickOptions == null) {
+                return true
+            }
+            return breadcrumbData.paths[breadcrumbData.selectedIndex] != viewModel.pickStartPath
+        }
+
+    private fun cancelPick() {
+        val activity = requireActivity()
+        activity.setResult(Activity.RESULT_CANCELED)
+        activity.finish()
+    }
+
+    private fun updateCancelPickMenuItem() {
+        if (!this::menuBinding.isInitialized) {
+            return
+        }
+        menuBinding.cancelPickItem.isVisible = viewModel.pickOptions != null
     }
 
     private fun updateSelectAllMenuItem() {
@@ -1121,7 +1210,7 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
     private fun onBottomToolbarNavigationIconClicked() {
         val pickOptions = viewModel.pickOptions
         if (pickOptions != null) {
-            requireActivity().finish()
+            cancelPick()
         } else {
             bottomActionMode.finish()
         }
@@ -1704,6 +1793,7 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
         val menu: Menu,
         val searchItem: MenuItem,
         val viewSortItem: MenuItem,
+        val cancelPickItem: MenuItem,
         val viewListItem: MenuItem,
         val viewGridItem: MenuItem,
         val sortByNameItem: MenuItem,
@@ -1721,6 +1811,7 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
                 inflater.inflate(R.menu.file_list, menu)
                 return MenuBinding(
                     menu, menu.findItem(R.id.action_search), menu.findItem(R.id.action_view_sort),
+                    menu.findItem(R.id.action_cancel_pick),
                     menu.findItem(R.id.action_view_list), menu.findItem(R.id.action_view_grid),
                     menu.findItem(R.id.action_sort_by_name),
                     menu.findItem(R.id.action_sort_by_type),

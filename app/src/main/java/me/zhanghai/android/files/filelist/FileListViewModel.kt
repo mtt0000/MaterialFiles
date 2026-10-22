@@ -139,6 +139,8 @@ class FileListViewModel : ViewModel() {
             _pickOptionsLiveData.value = value
         }
 
+    var pickStartPath: Path? = null
+
     var isCreateFileNameEditInitialized: Boolean = false
 
     private val _selectedFilesLiveData = MutableLiveData(fileItemSetOf())

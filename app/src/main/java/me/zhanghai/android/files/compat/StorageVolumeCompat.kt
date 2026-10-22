@@ -24,6 +24,17 @@ private val getPathMethod by lazyReflectedMethod(storageVolumeClass, "getPath")
 val StorageVolume.pathCompat: String
     get() = getPathMethod.invoke(this) as String
 
+private val getIdMethod by lazyReflectedMethod(storageVolumeClass, "getId")
+
+val StorageVolume.idCompat: String?
+    get() =
+        try {
+            getIdMethod.invoke(this) as String?
+        } catch (e: ReflectiveOperationException) {
+            e.printStackTrace()
+            null
+        }
+
 private val getPathFileMethod by lazyReflectedMethod(storageVolumeClass, "getPathFile")
 
 val StorageVolume.pathFileCompat: File
