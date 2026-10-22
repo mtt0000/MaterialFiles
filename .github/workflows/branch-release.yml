@@ -10,7 +10,8 @@ name: Branch release
 #   SIGNING_STORE_PASSWORD   The keystore password
 #   SIGNING_KEY_ALIAS        The key alias
 #   SIGNING_KEY_PASSWORD     The key password
-# Without them a debug APK is published instead.
+# Without them an unsigned release APK is published instead, which has to be signed before it can
+# be installed.
 
 on:
   push:
@@ -63,21 +64,15 @@ jobs:
               echo "keyAlias=$SIGNING_KEY_ALIAS"
               echo "keyPassword=$SIGNING_KEY_PASSWORD"
             } > signing.properties
-            echo "build_type=release" >> "$GITHUB_OUTPUT"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Signing secrets are not set, publishing a debug APK instead."
-            echo "build_type=debug" >> "$GITHUB_OUTPUT"
+            echo "::warning::Signing secrets are not set, publishing an unsigned APK."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build APK
-        env:
-          BUILD_TYPE: ${{ steps.signing.outputs.build_type }}
-        run: |
-          if [ "$BUILD_TYPE" = release ]; then
-            ./gradlew assembleRelease
-          else
-            ./gradlew assembleDebug
-          fi
+        # Avoid the signing config prompting for missing values.
+        run: ./gradlew assembleRelease < /dev/null
 
       - name: Remove signing key
         if: always()
@@ -88,13 +83,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          BUILD_TYPE: ${{ steps.signing.outputs.build_type }}
+          SIGNED: ${{ steps.signing.outputs.signed }}
         run: |
           set -euo pipefail
           tag="apk-$(echo "$BRANCH" | sed 's/[^A-Za-z0-9._-]/-/g')"
           short_sha="$(git rev-parse --short HEAD)"
-          apk_name="MaterialFiles-${tag#apk-}-${short_sha}-${BUILD_TYPE}.apk"
-          cp "$(ls app/build/outputs/apk/"$BUILD_TYPE"/*.apk | head -n 1)" "$apk_name"
+          if [ "$SIGNED" = true ]; then
+            apk_name="MaterialFiles-${tag#apk-}-${short_sha}.apk"
+          else
+            apk_name="MaterialFiles-${tag#apk-}-${short_sha}-unsigned.apk"
+          fi
+          cp "$(ls app/build/outputs/apk/release/*.apk | head -n 1)" "$apk_name"
 
           # Delete the previous release and tag of this branch.
           if gh release view "$tag" > /dev/null 2>&1; then
@@ -108,11 +107,10 @@ jobs:
             echo
             echo "- Commit: $GITHUB_SHA"
             echo "- Message: $(git log -1 --format=%s)"
-            echo "- Build type: $BUILD_TYPE"
-            if [ "$BUILD_TYPE" = debug ]; then
+            if [ "$SIGNED" != true ]; then
               echo
-              echo "This is a debug build, signed with a temporary key: uninstall the previous" \
-                "version before installing it."
+              echo "This APK is unsigned: it has to be signed (e.g. with apksigner) before it" \
+                "can be installed."
             fi
           } > "$notes_file"
 
