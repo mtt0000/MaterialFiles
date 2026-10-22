@@ -30,6 +30,7 @@ import android.widget.EditText
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
@@ -59,6 +60,7 @@ import me.zhanghai.android.files.R
 import me.zhanghai.android.files.app.application
 import me.zhanghai.android.files.app.clipboardManager
 import me.zhanghai.android.files.compat.checkSelfPermissionCompat
+import me.zhanghai.android.files.compat.createOpenDocumentTreeIntentCompat
 import me.zhanghai.android.files.compat.getDescriptionCompat
 import me.zhanghai.android.files.compat.isPrimaryCompat
 import me.zhanghai.android.files.compat.pathCompat
@@ -71,11 +73,13 @@ import me.zhanghai.android.files.databinding.FileListFragmentIncludeBinding
 import me.zhanghai.android.files.databinding.FileListFragmentSpeedDialIncludeBinding
 import me.zhanghai.android.files.file.FileItem
 import me.zhanghai.android.files.file.MimeType
+import me.zhanghai.android.files.file.asDocumentTreeUriOrNull
 import me.zhanghai.android.files.file.asMimeTypeOrNull
 import me.zhanghai.android.files.file.extension
 import me.zhanghai.android.files.file.fileProviderUri
 import me.zhanghai.android.files.file.isApk
 import me.zhanghai.android.files.file.isImage
+import me.zhanghai.android.files.file.takePersistablePermission
 import me.zhanghai.android.files.filejob.FileJobService
 import me.zhanghai.android.files.filelist.FileSortOptions.By
 import me.zhanghai.android.files.filelist.FileSortOptions.Order
@@ -88,7 +92,10 @@ import me.zhanghai.android.files.provider.archive.createArchiveRootPath
 import me.zhanghai.android.files.provider.archive.isArchivePath
 import me.zhanghai.android.files.provider.linux.isLinuxPath
 import me.zhanghai.android.files.settings.Settings
+import me.zhanghai.android.files.storage.DocumentTree
 import me.zhanghai.android.files.storage.StorageVolumeListLiveData
+import me.zhanghai.android.files.storage.Storages
+import me.zhanghai.android.files.storage.documentTree
 import me.zhanghai.android.files.terminal.Terminal
 import me.zhanghai.android.files.ui.AppBarLayoutExpandHackListener
 import me.zhanghai.android.files.ui.CoordinatorAppBarLayout
@@ -126,8 +133,10 @@ import me.zhanghai.android.files.util.fadeToVisibilityUnsafe
 import me.zhanghai.android.files.util.getDimensionDp
 import me.zhanghai.android.files.util.getQuantityString
 import me.zhanghai.android.files.util.hasSw600Dp
+import me.zhanghai.android.files.util.isAccessibleByPath
 import me.zhanghai.android.files.util.isMounted
 import me.zhanghai.android.files.util.isOrientationLandscape
+import me.zhanghai.android.files.util.launchSafe
 import me.zhanghai.android.files.util.putArgs
 import me.zhanghai.android.files.util.setOnEditorConfirmActionListener
 import me.zhanghai.android.files.util.showToast
@@ -158,6 +167,10 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
     private val requestStoragePermissionInSettingsLauncher = registerForActivityResult(
         RequestPermissionInSettingsContract(android.Manifest.permission.WRITE_EXTERNAL_STORAGE),
         this::onRequestStoragePermissionInSettingsResult
+    )
+    private val openStorageVolumeDocumentTreeLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+        this::onOpenStorageVolumeDocumentTreeResult
     )
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     private val requestNotificationPermissionLauncher = registerForActivityResult(
@@ -1535,8 +1548,38 @@ class FileListFragment : Fragment(), BreadcrumbLayout.Listener, FileListAdapter.
         get() = viewModel.currentPath
 
     override fun navigateToRoot(path: Path) {
+        if (path.isLinuxPath) {
+            val storageVolume = StorageVolumeListLiveData.valueCompat.find {
+                !it.isAccessibleByPath && Paths.get(it.pathCompat) == path
+            }
+            if (storageVolume != null) {
+                openStorageVolumeDocumentTree(storageVolume)
+                return
+            }
+        }
         collapseSearchView()
         viewModel.resetTo(path)
+    }
+
+    // A storage volume that can't be accessed by its path has to be accessed via the Storage
+    // Access Framework instead.
+    private fun openStorageVolumeDocumentTree(storageVolume: StorageVolume) {
+        val documentTree = storageVolume.documentTree
+        if (documentTree != null) {
+            navigateToRoot(documentTree.path)
+            return
+        }
+        openStorageVolumeDocumentTreeLauncher.launchSafe(
+            storageVolume.createOpenDocumentTreeIntentCompat(), this
+        )
+    }
+
+    private fun onOpenStorageVolumeDocumentTreeResult(result: ActivityResult) {
+        val treeUri = result.data?.data?.asDocumentTreeUriOrNull() ?: return
+        treeUri.takePersistablePermission()
+        val documentTree = DocumentTree(null, null, treeUri)
+        Storages.addOrReplace(documentTree)
+        navigateToRoot(documentTree.path)
     }
 
     override fun navigateToDefaultRoot() {

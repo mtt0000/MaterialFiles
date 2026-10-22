@@ -30,7 +30,9 @@ import me.zhanghai.android.files.storage.AddStorageDialogActivity
 import me.zhanghai.android.files.storage.FileSystemRoot
 import me.zhanghai.android.files.storage.Storage
 import me.zhanghai.android.files.storage.StorageVolumeListLiveData
+import me.zhanghai.android.files.storage.documentTree
 import me.zhanghai.android.files.util.createIntent
+import me.zhanghai.android.files.util.isAccessibleByPath
 import me.zhanghai.android.files.util.isMounted
 import me.zhanghai.android.files.util.isUsb
 import me.zhanghai.android.files.util.putArgs
@@ -140,7 +142,13 @@ private class IntentStorageItem(
 private val storageVolumeItems: List<NavigationItem>
     @Size(min = 0)
     get() =
-        StorageVolumeListLiveData.valueCompat.filter { !it.isPrimaryCompat && it.isMounted }
+        StorageVolumeListLiveData.valueCompat
+            .filter {
+                // A storage volume that can only be accessed via the Storage Access Framework is
+                // already shown as its document tree once that has been added.
+                !it.isPrimaryCompat && it.isMounted
+                    && (it.isAccessibleByPath || it.documentTree == null)
+            }
             .map { StorageVolumeItem(it) }
 
 private class StorageVolumeItem(
