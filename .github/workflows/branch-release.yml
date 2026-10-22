@@ -72,7 +72,8 @@ jobs:
 
       - name: Build APK
         # Avoid the signing config prompting for missing values.
-        run: ./gradlew assembleRelease < /dev/null
+        # Don't upload the mapping file to the upstream Firebase project.
+        run: ./gradlew assembleRelease -x uploadCrashlyticsMappingFileRelease < /dev/null
 
       - name: Remove signing key
         if: always()
